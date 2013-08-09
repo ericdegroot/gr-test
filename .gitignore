@@ -1,0 +1,8 @@
+\#*
+.\#*
+*~
+*.pyc
+build
+src/*.o
+test
+packet_utils_test

@@ -1,0 +1,67 @@
+./build-gnuradio gnuradio_build
+
+The source->encode->modulate side checks out, data between modulator and demodulator does not match between python and C++ implementations, but the difference is floating point error only.
+
+On the demod->decode side, the agc dumps seem to match, although the python implementation is returning less results.  This should be a buffer issue.  The results match up to the cut-off from the python side.
+
+The python impl returns a shorter freq_recov data set also, but the data matches with C++ impl up until the cut off again.
+
+There is a significant difference in the time_recov data.
+
+The difference in the time_recov data appears to just be floating point error accumulated.
+
+The receiver data is identical if python is given enough time to pump all the data.  The C++ impl appears to perform much better here already.
+
+The receiver data only seems to match when the constructor paramters for pfb_clock_sync_ccf are set statically so that both impls have the exact same constructor result.
+
+Everything seems to match with whitening enabled.  Even after reverting the statically set pfb_clock_sync_ccf constructor parameters.  I need to recheck with whitening disabled again, but the Python impl is running unacceptably slow.  I'm guessing this is due to the complex dump blocks, which I will disable next and retest.
+
+The python implemented complex dump block was the cause of the slow down.
+
+With whitening disabled in both implementations, there was 1 bad packet crc check with the C++ implementation.  Otherwise all the data matched while transmitting the toast-medium.png file.  The bad packet is the very first packet sent...  This is likely an implementation difference.  I will try next with the timing_bw set statically again on the pfb_clock_sync_ccf constructor.
+
+Returning to the hardcoded timing_bw value of 0.06280f for the pfb_clock_sync_ccf constructor, and with whitening remaining disabled, the first transmitted packet no longer failed the CRC check with the C++ impl.  I will leave the hard-coded timing_bw value in the C++ impl for now.  This value matches the truncated Python value, although I'm not sure why this makes a difference.  It would be good to reverse things and hard-code the greater precision value in the Python implementation, but the truncation appears to be happening at the bindings level.
+
+bytes2chunks is performing differently between impls.  This appears at first to have to do with the size of input buffer data.  In the C++ impl the input buffer is nearly fully when byte2chunks work is called, but with Python the input buffer varies wildly and is typically very small.  Since each uses a completely different packet_encoder, the difference must lie there.  Although, the byte dump from both encoders is identical in total, so there might also be a bug in gr_packed_to_unpacked, or I just need to change the amount of data produced by each work call for my custom C++ packet_encoder.
+
+Mar29 - When I add a preamble of 'ToaSt', followed by the image size and a CRC32 of the image contents, the packet containing the preamble fails crc check on the receiving end.  The data seems to maintain integrity up to packed_to_unpacked.  I haven't fully checked packed_to_unpacked.  I left all sorts of global test variables toast,toast1,...,toast6 lying around.  I also have debug code in packed_to_unpacked.
+
+eric@eric-HP-EliteBook-8540p:~/gr-test$ ./test
+gr_firdes.root_raised_cosine: gain=32.00000, sampling_freq=32.00000, symbol_rate=1.00000, alpha=0.35000, ntaps=704
+>>> gr_fir_ccf: using SSE
+gr_pfb_arb_resampler(): rate=2.00000, taps.size=705, filter_size=32
+>>> gr_fir_ccc: using SSE
+gr_firdes.root_raised_cosine: gain=32.00000, sampling_freq=64.00000, symbol_rate=1.00000, alpha=0.35000, ntaps=704
+digital_pfb_clock_sync_ccf(): sps=2.00000, loop_bw=0.06283186, taps.size=705, filter_size=32, init_phase=16.00000, max_dev=1.50000, osps=1
+54 6F 61 53 74 00 45 29 26 86 D6 9F F0 89 50 4E 47 0D 0A 1A 0A 00 
+pre-whiten: 546F6153740045292686D69FF089504E470D0A1A0A0000000D4948445200
+pos-whiten: AB506143740C452CE685C69E3C89058E781D1A160605C5C31E5885880795
+rec-whiten: AB506143740C452CE685C69E3C89058E781D1A160605C5C31E5885880795
+dee-whiten: 546F6153740045292686D69FF089504E470D0A1A0A0000000D4948445200
+make_packet: crc=375181883, crc=165CD23B, len=512
+546F6153740045292686
+pos-makpak: AB506143740C45 2C E6 85 C6 9E3C 89 058E 781D1A160605C5C31E5885880795
+AB506143740C452CE685C69E3C89058E781D1A160605C5C31E5885880795
+  1: 10100100  2: 11110010  3: 10101100  4: 11011101  5: 10100100  6: 11100010
+  7: 11110010  8: 10001100  9: 00100000 10: 11111100 11: 00000010 12: 00000100
+ 13: 00000010 14: 00000100 15: 10101011 16: 01010000 17: 01100001 18: 01000011
+ 19: 01110100 20: 00001100 21: 01000101 22: 00101100 23: 11100110 24: 10000101
+ 25: 11000110 26: 10011110 27: 00111100 28: 10001001 29: 00000101 30: 10001110
+ 31: 01111000 32: 00011101 33: 00011010 34: 00010110 35: 00000110 36: 00000101
+
+0b11110010 = 0xF2
+0b10001100 = 0x8C
+
+0b10101011 = 0xAB
+0b00101100 = 0x2C
+
+modulate/demodulate, the following data does not match above...
+
+pre-whiten: AB506143740C45 34 E6 86 C6 AE5C 89 0696 781D1A160605C5C31E5885880795
+pos-whiten: 546F6153740045312685D6AF90895356470D0A1A0A0000000D4948445200
+unmake_packet: expected=375181883, expected=165CD23B, actual=2402518066, actual=8F338432, len=512, ok=0
+546F6153740045312685
+payloadsrc: ok=0
+payloadsrc: 546F6153740045312685D6AF90895356470D0A1A0A0000000D4948445200
+payloadsrc: payload_buffer.length=512, nn=0, noutput_items=32768
+payloadsrc: 24499224499224493A7BC67149922449922449922449D2D9338E4B922449
